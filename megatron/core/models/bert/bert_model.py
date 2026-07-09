@@ -1,7 +1,7 @@
 # Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 
 import warnings
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import torch
 from torch import Tensor
@@ -36,7 +36,10 @@ class BertModel(LanguageModule):
         config (TransformerConfig): transformer config
         num_tokentypes (int) : Set to 2 when args.bert_binary_head is True, and 0 otherwise.
             Defaults to 0.
-        transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers
+        transformer_layer_spec (Union[ModuleSpec, TransformerBlockSubmodules]): Specifies
+            module(s) to use for transformer layers. Either a single ModuleSpec applied
+            uniformly to every layer, or a TransformerBlockSubmodules with a distinct
+            per-layer spec.
         vocab_size (int): vocabulary size
         max_sequence_length (int): maximum size of sequence. This is used for positional embedding
         pre_process (bool): Include embedding layer (used with pipeline parallelism)
@@ -72,7 +75,7 @@ class BertModel(LanguageModule):
         self,
         config: TransformerConfig,
         num_tokentypes: int,
-        transformer_layer_spec: ModuleSpec,
+        transformer_layer_spec: Union[ModuleSpec, TransformerBlockSubmodules],
         vocab_size: int,
         max_sequence_length: int,
         pre_process: bool = True,
@@ -100,7 +103,9 @@ class BertModel(LanguageModule):
             assert post_process and add_binary_head
 
         self.config: TransformerConfig = config
-        self.transformer_layer_spec: ModuleSpec = transformer_layer_spec
+        self.transformer_layer_spec: Union[ModuleSpec, TransformerBlockSubmodules] = (
+            transformer_layer_spec
+        )
         self.vocab_size = vocab_size
         self.max_sequence_length = max_sequence_length
         self.pre_process = pre_process

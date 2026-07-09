@@ -17,6 +17,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from tests.unit_tests.test_utilities import Utils
@@ -563,6 +564,40 @@ class TestBertModel:
         with pytest.raises(ValueError, match=error_match):
             self.bert_model.bert_position_ids(
                 token_ids, PackedSeqParams(qkv_format='thd', cu_seqlens_q=cu_seqlens)
+            )
+
+    @pytest.mark.internal
+    def test_accepts_per_layer_named_transformer_block_submodules(self):
+        # transformer_layer_spec may be a TransformerBlockSubmodules with a distinct,
+        # named ModuleSpec per layer (e.g. so FP8 quantization matchers can target
+        # specific layers), not just a single ModuleSpec applied uniformly. The
+        # sanity check performed during __init__ should tolerate this instead of
+        # assuming a uniform spec.
+        num_layers = 2
+        layer_specs = [
+            ModuleSpec(
+                module=TransformerLayer,
+                params={"name": f"layers.{i}"},
+                submodules=get_bert_layer_with_transformer_engine_submodules(),
+            )
+            for i in range(num_layers)
+        ]
+        transformer_layer_spec = TransformerBlockSubmodules(layer_specs=layer_specs)
+
+        bert_model = BertModel(
+            config=self.bert_model.config,
+            num_tokentypes=0,
+            transformer_layer_spec=transformer_layer_spec,
+            vocab_size=100,
+            max_sequence_length=self.bert_model.max_sequence_length,
+        )
+
+        assert isinstance(bert_model.transformer_layer_spec, TransformerBlockSubmodules)
+        attn_mask_dimensions = bert_model._sanity_check_attention_and_get_attn_mask_dimension()
+        assert attn_mask_dimensions == "b11s"
+        for layer_spec in transformer_layer_spec.layer_specs:
+            assert layer_spec.submodules.self_attention.params['attn_mask_type'] == (
+                AttnMaskType.padding
             )
 
 

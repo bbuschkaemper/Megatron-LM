@@ -600,6 +600,27 @@ class TestBertModel:
                 AttnMaskType.padding
             )
 
+    def test_can_skip_default_output_layer_construction(self):
+        # Subclasses that assign their own output_layer (e.g. a
+        # Transformer-Engine-backed linear) right after super().__init__() should
+        # be able to skip building the default tensor_parallel.ColumnParallelLinear
+        # output layer entirely via build_output_layer=False, since building it
+        # unconditionally is both wasted work and requires the APEX
+        # fused_weight_gradient_mlp_cuda extension whenever
+        # config.gradient_accumulation_fusion is True, even though it is
+        # immediately discarded and replaced.
+        bert_model = BertModel(
+            config=self.bert_model.config,
+            num_tokentypes=0,
+            transformer_layer_spec=get_bert_layer_with_transformer_engine_spec(),
+            vocab_size=100,
+            max_sequence_length=self.bert_model.max_sequence_length,
+            build_output_layer=False,
+        )
+
+        assert "output_layer" not in bert_model._modules
+        assert not hasattr(bert_model, "output_layer")
+
 
 class TestBertModelAttentionDimensions:
 

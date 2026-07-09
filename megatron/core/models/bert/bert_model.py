@@ -57,6 +57,15 @@ class BertModel(LanguageModule):
             bypassing BERT's dense+GeLU+LayerNorm transform.
         output_layer_bias (bool): Whether to include a bias in the vocabulary projection.
             Defaults to True for backward compatibility.
+        build_output_layer (bool): Whether to build the default
+            ``tensor_parallel.ColumnParallelLinear`` output projection. Defaults to True.
+            Set to False for subclasses that assign their own ``output_layer`` (e.g. a
+            Transformer-Engine-backed linear) right after calling ``super().__init__()``,
+            so the default linear is never constructed. This avoids paying its
+            construction cost (and its hard requirement on the APEX
+            ``fused_weight_gradient_mlp_cuda`` extension when
+            ``config.gradient_accumulation_fusion`` is True) for a layer that would
+            immediately be discarded and replaced anyway.
     """
 
     def __init__(
@@ -80,6 +89,7 @@ class BertModel(LanguageModule):
         pg_collection: Optional[ProcessGroupCollection] = None,
         apply_lm_head: bool = True,
         output_layer_bias: bool = True,
+        build_output_layer: bool = True,
     ):
         super(BertModel, self).__init__(config=config, pg_collection=pg_collection)
 
@@ -143,20 +153,22 @@ class BertModel(LanguageModule):
             # TODO: Make sure you are passing in the mpu_vocab_size properly
             self.lm_head = BertLMHead(config.hidden_size, config) if self.apply_lm_head else None
 
-            self.output_layer = tensor_parallel.ColumnParallelLinear(
-                config.hidden_size,
-                self.vocab_size,
-                config=config,
-                init_method=(
-                    config.embedding_init_method
-                    if config.use_mup and not self.share_embeddings_and_output_weights
-                    else config.init_method
-                ),
-                bias=self.output_layer_bias,
-                skip_bias_add=False,
-                gather_output=not self.parallel_output,
-                skip_weight_param_allocation=pre_process and share_embeddings_and_output_weights,
-            )
+            if build_output_layer:
+                self.output_layer = tensor_parallel.ColumnParallelLinear(
+                    config.hidden_size,
+                    self.vocab_size,
+                    config=config,
+                    init_method=(
+                        config.embedding_init_method
+                        if config.use_mup and not self.share_embeddings_and_output_weights
+                        else config.init_method
+                    ),
+                    bias=self.output_layer_bias,
+                    skip_bias_add=False,
+                    gather_output=not self.parallel_output,
+                    skip_weight_param_allocation=pre_process
+                    and share_embeddings_and_output_weights,
+                )
 
             self.binary_head = None
             if self.add_binary_head:
